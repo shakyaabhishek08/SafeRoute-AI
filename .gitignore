@@ -1,12 +1,11 @@
 # Node
 node_modules/
 npm-debug.log*
-
+venv/
+.venv/
 # Python
 __pycache__/
 *.py[cod]
-venv/
-.venv/
 env/
 
 # Environment variables
