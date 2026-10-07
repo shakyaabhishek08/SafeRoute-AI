@@ -2,24 +2,46 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import os
 
+
+# -------------------------------------------------------
+# Load Environment Variables
+# -------------------------------------------------------
+
 load_dotenv()
 
-# ---------------------------------------
-# MongoDB Connection
-# ---------------------------------------
+
+# -------------------------------------------------------
+# MongoDB Configuration
+# -------------------------------------------------------
 
 MONGO_URL = os.getenv("MONGO_URL")
 
 if not MONGO_URL:
-    raise ValueError("MONGO_URL not found in .env")
+    raise ValueError(
+        "MONGO_URL not found in .env"
+    )
 
-client = AsyncIOMotorClient(MONGO_URL)
+
+# -------------------------------------------------------
+# MongoDB Client
+# -------------------------------------------------------
+
+client = AsyncIOMotorClient(
+    MONGO_URL,
+    serverSelectionTimeoutMS=5000
+)
+
+
+# -------------------------------------------------------
+# Database
+# -------------------------------------------------------
 
 db = client["saferoute"]
 
-# ---------------------------------------
+
+# -------------------------------------------------------
 # Collections
-# ---------------------------------------
+# -------------------------------------------------------
 
 users_collection = db["users"]
 

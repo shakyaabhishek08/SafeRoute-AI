@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from bson import ObjectId
 from app.auth import decode_access_token
-
+from app.dependencies import get_admin_user
 from app.database import (
     users_collection,
     incidents_collection,
@@ -12,64 +12,6 @@ router = APIRouter(
     prefix="/api/admin",
     tags=["Admin"]
 )
-# ---------------------------------------------------------
-# Get Current Admin
-# ---------------------------------------------------------
-
-async def get_admin_user(
-    authorization: str = Header(None)
-):
-
-    if authorization is None:
-
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header missing"
-        )
-
-    if not authorization.startswith("Bearer "):
-
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token"
-        )
-
-    token = authorization.replace(
-        "Bearer ",
-        ""
-    )
-
-    payload = decode_access_token(token)
-
-    if payload is None:
-
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token"
-        )
-
-    user = await users_collection.find_one(
-        {
-            "email": payload["email"]
-        }
-    )
-
-    if user is None:
-
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    if user.get("role") != "admin":
-
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access only"
-        )
-
-    return user
-
 # ---------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------
@@ -270,7 +212,10 @@ async def get_incidents(
 # ---------------------------------------------------------
 
 @router.delete("/incidents/{incident_id}")
-async def delete_incident(incident_id: str):
+async def delete_incident(
+    incident_id: str,
+    admin=Depends(get_admin_user)
+):
 
     try:
 
@@ -351,7 +296,10 @@ async def get_journeys(
 # ---------------------------------------------------------
 
 @router.delete("/journeys/{journey_id}")
-async def delete_journey(journey_id: str):
+async def delete_journey(
+    journey_id: str,
+    admin=Depends(get_admin_user)
+):
 
     try:
 

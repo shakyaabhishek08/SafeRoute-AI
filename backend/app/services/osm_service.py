@@ -3,22 +3,38 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# More reliable Overpass mirror
+
+# ============================================================
+# OVERPASS SERVERS
+# ============================================================
+
 OVERPASS_SERVERS = [
-    "https://overpass.kumi.systems/api/interpreter"
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
 ]
+
+
+# ============================================================
+# HTTP CONFIGURATION
+# ============================================================
 
 HEADERS = {
     "User-Agent": "SafeRouteAI/1.0 (Educational Project)",
     "Accept": "application/json",
-    "Content-Type": "application/x-www-form-urlencoded"
+    "Content-Type": "application/x-www-form-urlencoded",
 }
+
+
 session = requests.Session()
 
+# Do NOT repeatedly retry slow public Overpass servers.
 retry = Retry(
-    total=2,
-    backoff_factor=1,
-    status_forcelist=[429,500,502,503,504]
+    total=0,
+    connect=0,
+    read=0,
+    backoff_factor=0,
+    status_forcelist=[],
+    allowed_methods=["POST"],
 )
 
 adapter = HTTPAdapter(max_retries=retry)
@@ -26,12 +42,20 @@ adapter = HTTPAdapter(max_retries=retry)
 session.mount("http://", adapter)
 session.mount("https://", adapter)
 
-# -------------------------------------------------------
-# Distance Calculator
-# -------------------------------------------------------
+
+# ============================================================
+# DISTANCE CALCULATION
+# ============================================================
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371
+    """
+    Calculate distance between two coordinates using Haversine formula.
+
+    Returns:
+        Distance in kilometers.
+    """
+
+    R = 6371.0
 
     d_lat = math.radians(lat2 - lat1)
     d_lon = math.radians(lon2 - lon1)
@@ -43,78 +67,140 @@ def calculate_distance(lat1, lon1, lat2, lon2):
         * math.sin(d_lon / 2) ** 2
     )
 
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    c = 2 * math.atan2(
+        math.sqrt(a),
+        math.sqrt(1 - a)
+    )
 
     return R * c
 
 
-# -------------------------------------------------------
-# Execute Overpass Query
-# -------------------------------------------------------
+# ============================================================
+# OVERPASS QUERY EXECUTION
+# ============================================================
 
 def execute_query(query):
+    """
+    Execute an Overpass API query.
+
+    Tries each configured server once.
+
+    Returns:
+        {
+            "success": True/False,
+            "data": {...} or None,
+            "error": "..."/None
+        }
+    """
+
+    last_error = None
 
     for server in OVERPASS_SERVERS:
-
         try:
-
             response = session.post(
-
                 server,
-
                 headers=HEADERS,
-
                 data={"data": query},
-
-                timeout=3
-
+                timeout=3,
             )
 
             response.raise_for_status()
 
-            return response.json()
+            data = response.json()
+
+            return {
+                "success": True,
+                "data": data,
+                "error": None,
+            }
 
         except requests.exceptions.Timeout:
-          continue
+            last_error = f"Overpass server timed out: {server}"
+            print("Overpass timeout:", server)
+            continue
 
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            last_error = f"Overpass request failed: {server}"
+            print("Overpass request failed:", server, e)
+            continue
+
+        except ValueError:
+            last_error = f"Invalid JSON returned by: {server}"
+            print("Overpass returned invalid JSON:", server)
             continue
 
         except Exception as e:
+            last_error = f"Unexpected Overpass error: {server}"
+            print("Unexpected Overpass error:", server, e)
+            continue
 
-            print("Unexpected Overpass Error:", e)
+    print("All Overpass servers unavailable.")
 
     return {
-
-        "elements": []
-
+        "success": False,
+        "data": None,
+        "error": last_error,
     }
-# -------------------------------------------------------
-# Nearby Police Stations
-# -------------------------------------------------------
+
+# ============================================================
+# NEARBY POLICE STATIONS
+# ============================================================
 
 def nearby_police(lat, lng, radius=1000):
+    """
+    Find police stations near a coordinate.
+
+    radius:
+        Search radius in meters.
+
+    Returns:
+        Dictionary containing available stations and nearest station.
+    """
 
     query = f"""
-    [out:json];
+    [out:json][timeout:5];
+
     (
-      node["amenity"="police"](around:{radius},{lat},{lng});
-      way["amenity"="police"](around:{radius},{lat},{lng});
-      relation["amenity"="police"](around:{radius},{lat},{lng});
+        node["amenity"="police"](around:{radius},{lat},{lng});
+
+        way["amenity"="police"](around:{radius},{lat},{lng});
+
+        relation["amenity"="police"](around:{radius},{lat},{lng});
     );
+
     out center tags;
     """
 
-    data = execute_query(query)
+    result = execute_query(query)
+
+    if not result["success"]:
+
+        return {
+            "available": False,
+            "source": "openstreetmap",
+            "error": result["error"],
+            "stations": [],
+            "nearest": None,
+        }
+
+    data = result["data"]
 
     stations = []
 
     for item in data.get("elements", []):
 
-        if "lat" in item:
+        # ----------------------------------------------------
+        # NODE
+        # ----------------------------------------------------
+
+        if "lat" in item and "lon" in item:
 
             station_lat = item["lat"]
             station_lng = item["lon"]
+
+        # ----------------------------------------------------
+        # WAY / RELATION
+        # ----------------------------------------------------
 
         else:
 
@@ -130,60 +216,79 @@ def nearby_police(lat, lng, radius=1000):
             lat,
             lng,
             station_lat,
-            station_lng
+            station_lng,
+        )
+
+        tags = item.get("tags", {})
+
+        station_name = tags.get(
+            "name",
+            "Unnamed Police Station"
         )
 
         stations.append({
-
-            "name": item.get("tags", {}).get(
-                "name",
-                "Police Station"
-            ),
-
+            "name": station_name,
             "distance_km": round(distance, 2),
-
             "lat": station_lat,
-
-            "lng": station_lng
-
+            "lng": station_lng,
         })
 
-    stations.sort(key=lambda x: x["distance_km"])
-    if not stations:
-        stations = [
+    # Sort by nearest distance
+    stations.sort(
+        key=lambda station: station["distance_km"]
+    )
 
-            {
+    nearest = stations[0] if stations else None
 
-                "name": "Nearest Police Station",
-
-                "distance_km": 2.1,
-
-                "lat": lat,
-
-                "lng": lng
-
-            }
-
-        ]
-
-    return stations
+    return {
+        "available": True,
+        "source": "openstreetmap",
+        "error": None,
+        "stations": stations,
+        "nearest": nearest,
+    }
 
 
-# -------------------------------------------------------
-# Street Lights
-# -------------------------------------------------------
+# ============================================================
+# STREET LIGHTING
+# ============================================================
 
 def street_light_status(lat, lng, radius=300):
+    """
+    Check mapped street-lighting information around a location.
+
+    Important:
+    OpenStreetMap does NOT contain complete street-light
+    information everywhere.
+
+    Therefore this function NEVER invents lighting values.
+    """
 
     query = f"""
-    [out:json];
+    [out:json][timeout:5];
+
     (
-      way["highway"]["lit"](around:{radius},{lat},{lng});
+        way["highway"]["lit"](around:{radius},{lat},{lng});
     );
+
     out tags;
     """
 
-    data = execute_query(query)
+    result = execute_query(query)
+
+    if not result["success"]:
+
+        return {
+            "available": False,
+            "source": "openstreetmap",
+            "error": result["error"],
+            "lit_roads": 0,
+            "unlit_roads": 0,
+            "unknown_roads": 0,
+            "lighting_score": None,
+        }
+
+    data = result["data"]
 
     lit = 0
     unlit = 0
@@ -191,7 +296,9 @@ def street_light_status(lat, lng, radius=300):
 
     for item in data.get("elements", []):
 
-        value = item.get("tags", {}).get("lit")
+        tags = item.get("tags", {})
+
+        value = tags.get("lit")
 
         if value == "yes":
 
@@ -205,75 +312,101 @@ def street_light_status(lat, lng, radius=300):
 
             unknown += 1
 
-    # -------------------------------
-    # Fallback if API returned nothing
-    # -------------------------------
+    # --------------------------------------------------------
+    # No mapped lighting information
+    # --------------------------------------------------------
 
     if lit == 0 and unlit == 0:
 
         return {
-
-            "lit_roads": 5,
-
-            "unlit_roads": 2,
-
-            "unknown": 0,
-
-            "lighting_score": 7
-
+            "available": True,
+            "source": "openstreetmap",
+            "error": None,
+            "lit_roads": 0,
+            "unlit_roads": 0,
+            "unknown_roads": unknown,
+            "lighting_score": None,
         }
 
-    if lit > unlit:
+    # --------------------------------------------------------
+    # Calculate score ONLY from actual mapped data
+    # --------------------------------------------------------
 
-        score = 10
+    total_known = lit + unlit
 
-    elif lit == unlit:
+    lighting_ratio = lit / total_known
 
-        score = 6
-
-    else:
-
-        score = 3
+    lighting_score = round(
+        lighting_ratio * 10
+    )
 
     return {
-
+        "available": True,
+        "source": "openstreetmap",
+        "error": None,
         "lit_roads": lit,
-
         "unlit_roads": unlit,
-
-        "unknown": unknown,
-
-        "lighting_score": score
-
+        "unknown_roads": unknown,
+        "lighting_score": lighting_score,
     }
 
 
-# -------------------------------------------------------
-# Nearby Hospitals
-# -------------------------------------------------------
+# ============================================================
+# NEARBY HOSPITALS
+# ============================================================
 
 def nearby_hospitals(lat, lng, radius=3000):
+    """
+    Find hospitals near a coordinate.
+
+    radius:
+        Search radius in meters.
+    """
 
     query = f"""
-    [out:json];
+    [out:json][timeout:5];
+
     (
-      node["amenity"="hospital"](around:{radius},{lat},{lng});
-      way["amenity"="hospital"](around:{radius},{lat},{lng});
-      relation["amenity"="hospital"](around:{radius},{lat},{lng});
+        node["amenity"="hospital"](around:{radius},{lat},{lng});
+
+        way["amenity"="hospital"](around:{radius},{lat},{lng});
+
+        relation["amenity"="hospital"](around:{radius},{lat},{lng});
     );
+
     out center tags;
     """
 
-    data = execute_query(query)
+    result = execute_query(query)
+
+    if not result["success"]:
+
+        return {
+            "available": False,
+            "source": "openstreetmap",
+            "error": result["error"],
+            "hospitals": [],
+            "nearest": None,
+        }
+
+    data = result["data"]
 
     hospitals = []
 
     for item in data.get("elements", []):
 
-        if "lat" in item:
+        # ----------------------------------------------------
+        # NODE
+        # ----------------------------------------------------
+
+        if "lat" in item and "lon" in item:
 
             hospital_lat = item["lat"]
             hospital_lng = item["lon"]
+
+        # ----------------------------------------------------
+        # WAY / RELATION
+        # ----------------------------------------------------
 
         else:
 
@@ -289,38 +422,34 @@ def nearby_hospitals(lat, lng, radius=3000):
             lat,
             lng,
             hospital_lat,
-            hospital_lng
+            hospital_lng,
+        )
+
+        tags = item.get("tags", {})
+
+        hospital_name = tags.get(
+            "name",
+            "Unnamed Hospital"
         )
 
         hospitals.append({
-
-            "name": item.get("tags", {}).get(
-                "name",
-                "Hospital"
-            ),
-
+            "name": hospital_name,
             "distance_km": round(distance, 2),
-
             "lat": hospital_lat,
-
-            "lng": hospital_lng
-
+            "lng": hospital_lng,
         })
 
-    if not hospitals:
-        hospitals = [
+    # Sort nearest first
+    hospitals.sort(
+        key=lambda hospital: hospital["distance_km"]
+    )
 
-            {
+    nearest = hospitals[0] if hospitals else None
 
-                "name": "Nearest Hospital",
-
-                "distance_km": 3.4,
-
-                "lat": lat,
-
-                "lng": lng
-
-            }
-
-        ]
-    return hospitals
+    return {
+        "available": True,
+        "source": "openstreetmap",
+        "error": None,
+        "hospitals": hospitals,
+        "nearest": nearest,
+    }

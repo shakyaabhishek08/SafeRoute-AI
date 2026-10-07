@@ -1,23 +1,40 @@
-# Python virtual environment
-backend/venv/
-venv/
-.venv/
-
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
 
-# Environment/secrets
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables / secrets
 .env
 .env.*
+!.env.example
 
 # Node
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
-# Build
+# Build files
 dist/
 build/
 
 # IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Python test/cache
+.pytest_cache/
+.coverage
+htmlcov/

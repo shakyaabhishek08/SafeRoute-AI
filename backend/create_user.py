@@ -1,50 +1,64 @@
 import asyncio
-from passlib.context import CryptContext
+import getpass
 
+from app.auth import hash_password
 from app.database import users_collection
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__truncate_error=False
-)
 
-ADMIN_EMAIL = "demosaferoute@gmail.com"
-ADMIN_PASSWORD = "Admin@123"
-ADMIN_NAME = "SafeRoute Admin"
+# -------------------------------------------------------
+# Create User
+# -------------------------------------------------------
 
+async def create_user():
+    print("\n==============================")
+    print("   SafeRoute AI - Create User")
+    print("==============================\n")
 
-async def create_admin():
+    name = input("Enter name: ").strip()
+    email = input("Enter email: ").strip().lower()
+    password = getpass.getpass("Enter password: ")
 
-    existing = await users_collection.find_one(
-        {
-            "email": ADMIN_EMAIL
-        }
-    )
-
-    if existing:
-        print("Admin already exists")
+    if not name:
+        print("Error: Name cannot be empty.")
         return
 
-    admin = {
+    if not email:
+        print("Error: Email cannot be empty.")
+        return
 
-        "name": ADMIN_NAME,
+    if not password:
+        print("Error: Password cannot be empty.")
+        return
 
-        "email": ADMIN_EMAIL,
+    # Check whether user already exists
+    existing_user = await users_collection.find_one(
+        {"email": email}
+    )
 
-        "password": pwd_context.hash(ADMIN_PASSWORD),
+    if existing_user:
+        print("Error: User with this email already exists.")
+        return
 
-        "role": "admin",
-
-        "emergency_contacts": [],
-
-        "created_at": None
-
+    # Create user
+    user = {
+        "name": name,
+        "email": email,
+        "password": hash_password(password),
+        "role": "user",
+        "emergency_contacts": []
     }
 
-    await users_collection.insert_one(admin)
+    result = await users_collection.insert_one(user)
 
-    print("Admin account created successfully")
+    print("\nUser created successfully.")
+    print(f"User ID: {result.inserted_id}")
+    print(f"Email: {email}")
+    print("Role: user")
 
 
-asyncio.run(create_admin())
+# -------------------------------------------------------
+# Run Script
+# -------------------------------------------------------
+
+if __name__ == "__main__":
+    asyncio.run(create_user())

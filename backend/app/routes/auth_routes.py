@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
+from app.dependencies import get_current_user
 
 from app.database import users_collection
 from app.auth import (
@@ -32,57 +33,6 @@ class LoginRequest(BaseModel):
 
 class EmergencyContactsRequest(BaseModel):
     contacts: List[str]
-
-
-# --------------------------------------------------
-# Helper Function
-# --------------------------------------------------
-
-async def get_current_user(authorization: Optional[str]):
-
-    if authorization is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header missing"
-        )
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token format"
-        )
-
-    token = authorization.replace("Bearer ", "")
-
-    payload = decode_access_token(token)
-
-    if payload is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token"
-        )
-
-    email = payload.get("email")
-
-    if email is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token"
-        )
-
-    user = await users_collection.find_one(
-        {
-            "email": email
-        }
-    )
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    return user
 
 
 # --------------------------------------------------
